@@ -1,59 +1,157 @@
-import tensorflow as tf
-from tensorflow import keras
-from keras.models import Sequential
-from keras.layers import Activation, Dense, Flatten, BatchNormalization, Conv2D, MaxPool2D, Dropout
-from keras.optimizers import Adam, SGD
-from keras.metrics import categorical_crossentropy
-from keras.preprocessing.image import ImageDataGenerator
+import torch
+import torchvision
+import torchvision.transforms as transforms
 import warnings
 import numpy as np
 import cv2
-from keras.callbacks import ReduceLROnPlateau
-from keras.callbacks import ModelCheckpoint, EarlyStopping
 from matplotlib import pyplot as plt
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+
 train_path = './train'
 test_path = './test'
-train_batches = ImageDataGenerator(preprocessing_function=tf.keras.applications.vgg16.preprocess_input).flow_from_directory(directory=train_path, target_size=(64,64), class_mode='categorical', batch_size=10,shuffle=True)
-test_batches = ImageDataGenerator(preprocessing_function=tf.keras.applications.vgg16.preprocess_input).flow_from_directory(directory=test_path, target_size=(64,64), class_mode='categorical', batch_size=10, shuffle=True)
 
-imgs, labels = next(train_batches)
-#Plotting the images...
-def plotImages(images_arr):
-    fig, axes = plt.subplots(1, 10, figsize=(30,20))
-    axes = axes.flatten()
-    for img, ax in zip( images_arr, axes):
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        ax.imshow(img)
-        ax.axis('off')
-    plt.tight_layout()
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+batch_size = 4
+
+trainset = torchvision.datasets.ImageFolder(root=train_path, transform=transform)
+
+# trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+#                                        download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+                                          shuffle=True, num_workers=0)
+testset = torchvision.datasets.ImageFolder(root=test_path, transform=transform)
+
+# testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+#                                        download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                         shuffle=False, num_workers=0)
+
+classes = ('1', '2')
+
+# classes = ('plane', 'car', 'bird', 'cat',
+#            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# functions to show an image
+
+
+def imshow(img):
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
-plotImages(imgs)
-print(imgs.shape)
-print(labels)
 
-model = Sequential()
-model.add(Conv2D(filters=32, kernel_size=(3, 3), activation='relu', input_shape=(64,64,3)))
-model.add(MaxPool2D(pool_size=(2, 2), strides=2))
-model.add(Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding = 'same'))
-model.add(MaxPool2D(pool_size=(2, 2), strides=2))
-model.add(Conv2D(filters=128, kernel_size=(3, 3), activation='relu', padding = 'valid'))
-model.add(MaxPool2D(pool_size=(2, 2), strides=2))
-model.add(Flatten())
-model.add(Dense(64,activation ="relu"))
-model.add(Dense(128,activation ="relu"))
-#model.add(Dropout(0.2))
-model.add(Dense(128,activation ="relu"))
-#model.add(Dropout(0.3))
-model.add(Dense(10,activation ="softmax"))
 
-model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=1, min_lr=0.0001)
-early_stop = EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=0, mode='auto')
-model.compile(optimizer=SGD(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=1, min_lr=0.0005)
-early_stop = EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=0, mode='auto')
+# get some random training images
+dataiter = iter(trainloader)
+images, labels = dataiter.next()
 
-history2 = model.fit(train_batches, epochs=10, callbacks=[reduce_lr, early_stop],  validation_data = test_batches)
+# show images
+imshow(torchvision.utils.make_grid(images))
+# print labels
+# print(' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
+
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(35344, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = torch.flatten(x, 1) # flatten all dimensions except batch
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
+
+net = Net()
+
+import torch.optim as optim
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+
+
+for epoch in range(3):  # loop over the dataset multiple times
+    print("Training epoch: ", epoch)
+    running_loss = 0.0
+    for i, data in enumerate(trainloader, 0):
+        # get the inputs; data is a list of [inputs, labels]
+        inputs, labels = data
+
+        # zero the parameter gradients
+        optimizer.zero_grad()
+
+        # forward + backward + optimize
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # print statistics
+        running_loss += loss.item()
+        if i % 100 == 1:    # print every 2000 mini-batches
+            print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
+            
+            running_loss = 0.0
+
+print('Finished Training')
+
+PATH = './sign_model.pth'
+torch.save(net.state_dict(), PATH)
+
+
+dataiter = iter(testloader)
+images, labels = dataiter.next()
+
+# print images
+imshow(torchvision.utils.make_grid(images))
+print('GroundTruth: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(4)))
+
+net = Net()
+net.load_state_dict(torch.load(PATH))
+
+outputs = net(images)
+
+_, predicted = torch.max(outputs, 1)
+
+print('Predicted: ', ' '.join(f'{classes[predicted[j]]:5s}'
+                              for j in range(4)))
+
+correct = 0
+total = 0
+# since we're not training, we don't need to calculate the gradients for our outputs
+with torch.no_grad():
+    for data in testloader:
+        images, labels = data
+        # calculate outputs by running images through the network
+        outputs = net(images)
+        # the class with the highest energy is what we choose as prediction
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+print(f'Accuracy of the network on the 10000 test images: {100 * correct // total} %')
+
+# prepare to count predictions for each class
+correct_pred = {classname: 0 for classname in classes}
+total_pred = {classname: 0 for classname in classes}
